@@ -30,9 +30,25 @@ logger = logging.getLogger(__name__)
 async def run_bot(connection: SmallWebRTCConnection) -> None:
     transport = create_transport(connection)
 
+    flow_system_instruction = None
+    flow_global_functions = []
+    if settings.flow_name == "collection":
+        from common.flows.collection import ROLE_CONTENT, get_global_functions
+
+        flow_system_instruction = ROLE_CONTENT
+        flow_global_functions = get_global_functions()
+
     llm = GeminiLiveLLMService(
         api_key=settings.google_api_key,
-        voice_id="Kore",
+        settings=GeminiLiveLLMService.Settings(
+            voice="Kore",
+            language="th-TH",
+            system_instruction=flow_system_instruction,
+            temperature=0.0,
+            top_p=0.1,
+            top_k=1,
+            max_tokens=512,
+        ),
         inference_on_context_initialization=True,
     )
 
@@ -92,6 +108,7 @@ async def run_bot(connection: SmallWebRTCConnection) -> None:
         task=task,
         llm=llm,
         context_aggregator=context_aggregator,
+        global_functions=flow_global_functions,
     )
 
     # ── Inject CRM context into state ──────────────────────────────────────
