@@ -64,7 +64,7 @@ async def run_bot(connection: SmallWebRTCConnection) -> None:
         ]
     )
 
-    turn_observer = TurnTrackingObserver(turn_end_timeout_secs=2.0)
+    turn_observer = TurnTrackingObserver(turn_end_timeout_secs=1.0)
 
     @turn_observer.event_handler("on_turn_ended")
     async def on_turn_ended(

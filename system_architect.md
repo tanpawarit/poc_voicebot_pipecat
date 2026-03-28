@@ -2,7 +2,7 @@
 
 ## Overview
 
-A real-time **Speech-to-Speech (S2S) voice bot** built on [Pipecat](https://github.com/pipecat-ai/pipecat) for automated debt-collection calls. The bot persona is **"Nong Jai"** (น้องใจ), an AI agent for Ngern Hai Jai Co., Ltd. (บริษัทเงินให้ใจจำกัด).
+A real-time **Speech-to-Speech (S2S) voice bot** built on [Pipecat](https://github.com/pipecat-ai/pipecat) for automated debt-collection calls. The bot persona is **"Nong Jai"** (น้องใจ), an AI agent for Ngern Hai Jai Co., Ltd. (บริษัทเงินให้ใจจำกัด), while the synthesized speaking voice is Gemini Live voice **`"Kore"`**.
 
 ---
 
@@ -26,18 +26,26 @@ A real-time **Speech-to-Speech (S2S) voice bot** built on [Pipecat](https://gith
 │  Pipecat Pipeline                                           │
 │                                                             │
 │  transport.input()                                          │
-│       ↓  (raw audio frames)                                 │
-│  LLMContextAggregator [user]                                │
-│       ↓  VAD (SileroVAD, stop_secs=0.3)                    │
-│       ↓  Turn detection (LocalSmartTurnAnalyzerV3)          │
-│       ↓  MinWordsUserTurnStartStrategy (min_words=2)        │
-│  GeminiLiveLLMService   ← Speech-to-Speech model           │
-│       ↓  (audio response frames)                            │
-│  LLMContextAggregator [assistant]                           │
+│       ↓  raw audio frames                                   │
+│  LLMContextAggregatorPair.user()                            │
+│       • Silero VAD detects speech activity                  │
+│       • MinWordsUserTurnStartStrategy starts user turn      │
+│       • TurnAnalyzerUserTurnStopStrategy decides turn end   │
+│       • finalized user text is appended to LLM context      │
+│       ↓                                                     │
+│  GeminiLiveLLMService   (Gemini Live S2S)                   │
+│       • receives audio stream from the pipeline             │
+│       • sends user transcription frames upstream            │
+│       • generates assistant audio with voice "Kore"         │
+│       ↓  audio + assistant transcript                       │
+│  LLMContextAggregatorPair.assistant()                       │
+│       • assistant text is appended to LLM context           │
 │       ↓                                                     │
 │  transport.output()                                         │
 └─────────────────────────────────────────────────────────────┘
 ```
+
+At session start, the assistant usually speaks first: `FlowManager.initialize()` sets the `opening` node, that node uses `respond_immediately=True`, and Gemini Live is configured to respond immediately when the initial context is loaded.
 
 ---
 
@@ -65,11 +73,13 @@ Server is started with `uvicorn` over HTTPS on port **7861** (configurable via `
 ### 3. Bot Pipeline — `app_s2s/bot.py`
 
 - **LLM**: `GeminiLiveLLMService` — Google Gemini Live (S2S model), voice `"Kore"`, inference on context initialization enabled
+- **Persona**: the words and behavior are driven by the flow prompts in `common/flows/collection.py`; the voice timbre comes from Gemini voice `"Kore"`
 - **VAD**: `SileroVADAnalyzer` with `stop_secs=0.3`
-- **Turn detection**: `LocalSmartTurnAnalyzerV3` (local CPU model)
-- **Turn start guard**: `MinWordsUserTurnStartStrategy(min_words=2)` — ignores utterances shorter than 2 words to avoid noise-triggered calls
+- **Turn detection**: `LocalSmartTurnAnalyzerV3` (local CPU model) is used inside `TurnAnalyzerUserTurnStopStrategy` to decide when the user has finished speaking
+- **Turn start guard**: `MinWordsUserTurnStartStrategy(min_words=2)` is used to start user turns from transcription; in practice this threshold mainly affects interruptions while the assistant is already speaking
 - **Metrics**: `enable_metrics=True`, `enable_usage_metrics=True`
 - **Turn observer**: `TurnTrackingObserver(turn_end_timeout_secs=2.0)` — logs turn count, duration, and interruption status
+- **First utterance**: the `opening` node uses `respond_immediately=True`, so the assistant normally delivers the greeting first
 
 ### 4. Configuration — `common/config.py`
 
@@ -88,7 +98,8 @@ Uses [pipecat-flows](https://github.com/pipecat-ai/pipecat-flows) for structured
 **FlowManager** orchestrates node transitions by:
 1. Injecting CRM state into `flow_manager.state` before initialization
 2. Calling `flow_manager.initialize(initial_node)` to start the first node
-3. Each node defines a **system prompt** + **function schemas** that the LLM calls to signal state transitions
+3. Updating the LLM context with the node's **system prompt** + **function schemas**
+4. Triggering the first reply immediately when `respond_immediately=True` on the active node
 
 ---
 
@@ -174,14 +185,15 @@ Set in `flow_manager.state["result_code"]` at session end:
 
 ## Latency Profile
 
-Since this project uses **Gemini Live (S2S)**, the STT and TTS layers are eliminated. The effective latency stack is:
+This project does not wire a separate STT service or a separate TTS service into the app pipeline. **Gemini Live (S2S)** bundles user transcription and assistant audio generation into one service. The effective latency stack is:
 
 ```
 User speaks
-  → VAD silence detection  (~300ms, stop_secs=0.3)
-  → SmartTurn analysis      (~local CPU, <50ms)
-  → Gemini Live round-trip  (~300–600ms TTFB)
-  → Audio playback starts
+  → local VAD silence detection         (~300ms, stop_secs=0.3)
+  → local SmartTurn end-of-turn check   (~local CPU, <50ms)
+  → Gemini Live finalizes transcript / begins response
+  → Gemini Live streams assistant audio
+  → transport.output() plays audio
 ```
 
 **Estimated TTFB**: ~600ms–900ms under normal network conditions.
@@ -191,8 +203,8 @@ User speaks
 | Parameter | Current | Effect of lowering |
 |---|---|---|
 | `stop_secs` | `0.3` | Faster response, higher false-cut risk |
-| `min_words` | `2` | Allows single-word triggers |
-| `turn_end_timeout_secs` | `2.0` | Shorter post-turn buffer |
+| `min_words` | `2` | Makes the system more willing to interrupt the assistant on short utterances while it is already talking |
+| `turn_end_timeout_secs` | `2.0` | Marks turns as completed sooner in observer logs/metrics; does not materially change response start time |
 
 ---
 
