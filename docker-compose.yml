@@ -1,0 +1,12 @@
+services:
+  s2s:
+    build:
+      context: .
+      target: s2s
+    ports:
+      - "7861:7861"
+    env_file: .env
+    environment:
+      - FLOW=${FLOW:-collection}
+      - HOST=0.0.0.0
+    restart: unless-stopped

@@ -1,0 +1,13 @@
+[project]
+name = "poc-voicebot-pipecat"
+version = "0.1.0"
+description = "Pipecat SmallWebRTC voicebot POC for a Thai debt collection flow"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "fastapi>=0.115.0,<1.0.0",
+    "pipecat-ai[google,silero,webrtc]",
+    "pipecat-ai-flows",
+    "python-dotenv>=1.0.1,<2.0.0",
+    "uvicorn>=0.34.0,<1.0.0",
+]
