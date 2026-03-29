@@ -4,13 +4,13 @@
 
 ระบบนี้เป็น voicebot แบบ real-time สำหรับ POC debt collection ภาษาไทย โดยใช้ `Pipecat` เป็น pipeline runtime, `FastAPI` เป็น server, `SmallWebRTC` เป็น transport, และ OpenAI สำหรับ `STT + intent classification + TTS`
 
-แนวคิดหลักของเวอร์ชันนี้คือ deterministic flow:
+แนวคิดหลักของเวอร์ชันนี้คือ scripted state machine ที่ให้ OpenAI ช่วยเลือก transition:
 
 - bot เปิดบทสนทนาด้วยสคริปต์คงที่
 - รับเสียงลูกค้าแบบ checkpoint-by-checkpoint
 - แปลงเสียงเป็นข้อความ
-- classify opening intent และ verify intent แยกกัน
-- route ไปยังสคริปต์ตอบกลับที่ fix ไว้
+- ใช้ OpenAI เลือก route ของแต่ละ checkpoint
+- route ไปยัง scripted response ที่ fix ไว้ทุก step
 - จบสาย
 
 ## High-Level Architecture
@@ -64,7 +64,7 @@ Pipecat Pipeline
 
 ไม่มี `FlowManager`, ไม่มี node transition, และไม่มี tool calling
 
-### 5. Intent Classification
+### 5. Stage Routing
 
 - `common/openai_intent_classifier.py`
 - ใช้ `AsyncOpenAI.responses.parse(...)`

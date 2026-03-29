@@ -1,4 +1,4 @@
-"""Deterministic multi-step router for the collection flow."""
+"""LLM-orchestrated multi-step router for the scripted collection flow."""
 
 import logging
 from typing import Mapping, Protocol
@@ -20,11 +20,19 @@ from common.flows.collection import (
     CollectionStage,
     VerifyIntent,
 )
+from common.openai_intent_classifier import StageIntent
 
 logger = logging.getLogger(__name__)
 
 
 class IntentClassifier(Protocol):
+    async def classify_stage(
+        self,
+        stage: CollectionStage,
+        transcript: str,
+        state: Mapping[str, object] | None = None,
+    ) -> StageIntent: ...
+
     async def classify_opening(
         self,
         transcript: str,
@@ -39,7 +47,7 @@ class IntentClassifier(Protocol):
 
 
 class CollectionRouterProcessor(FrameProcessor):
-    """Drive the opening -> verify collection checkpoints using scripted prompts."""
+    """Drive the scripted collection flow while letting OpenAI choose the transition."""
 
     def __init__(
         self,
@@ -110,7 +118,7 @@ class CollectionRouterProcessor(FrameProcessor):
 
     async def _handle_opening_transcript(self, transcript: str) -> None:
         try:
-            intent = await self._classifier.classify_opening(transcript, self._state)
+            intent = await self._classify_current_stage(transcript)
         except Exception:
             logger.exception("Opening intent classification failed for transcript: %s", transcript)
             await self._push_fallback_and_end(
@@ -143,7 +151,7 @@ class CollectionRouterProcessor(FrameProcessor):
 
     async def _handle_verify_transcript(self, transcript: str) -> None:
         try:
-            intent = await self._classifier.classify_verify(transcript, self._state)
+            intent = await self._classify_current_stage(transcript)
         except Exception:
             logger.exception("Verify intent classification failed for transcript: %s", transcript)
             await self._push_fallback_and_end(
@@ -167,6 +175,19 @@ class CollectionRouterProcessor(FrameProcessor):
             return
 
         await self._push_response_and_end(self._flow_definition.verify_response_for(intent))
+
+    async def _classify_current_stage(self, transcript: str) -> StageIntent:
+        if hasattr(self._classifier, "classify_stage"):
+            return await self._classifier.classify_stage(
+                self._current_stage,
+                transcript,
+                self._state,
+            )
+
+        if self._current_stage == CollectionStage.OPENING:
+            return await self._classifier.classify_opening(transcript, self._state)
+
+        return await self._classifier.classify_verify(transcript, self._state)
 
     async def _handle_empty_transcript(self) -> None:
         retry_count = self._stage_retry_counts[self._current_stage]

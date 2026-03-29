@@ -2,9 +2,9 @@
 
 POC voicebot ภาษาไทยสำหรับงานโทรติดตามหนี้ โดยใช้ `Pipecat` + `FastAPI` + `OpenAI` + `SmallWebRTC`
 
-ตอนนี้ runtime หลักของ repo เป็นแบบ cascaded deterministic:
+ตอนนี้ runtime หลักของ repo เป็นแบบ scripted-state routing:
 
-`transport.input -> VAD -> OpenAI STT -> intent router -> OpenAI TTS -> transport.output`
+`transport.input -> VAD -> OpenAI STT -> OpenAI LLM routing -> scripted OpenAI TTS -> transport.output`
 
 Flow ที่มีอยู่คือ `collection` แบบ 2-step deterministic POC:
 
@@ -20,8 +20,8 @@ Flow ที่มีอยู่คือ `collection` แบบ 2-step determin
 - `app_s2s/server.py` FastAPI + WebRTC offer endpoint
 - `app_s2s/bot.py` Pipecat pipeline แบบ OpenAI cascaded runtime
 - `common/flows/collection.py` static script definition สำหรับ collection POC
-- `common/openai_intent_classifier.py` structured intent classification
-- `common/processors/collection_router.py` route transcript ไปยัง script + TTS
+- `common/openai_intent_classifier.py` OpenAI stage routing สำหรับเลือก next step
+- `common/processors/collection_router.py` state machine ที่ให้ LLM เลือก transition แล้วพูดตาม script ตรง
 - `common/flows/mock_crm.py` mock CRM state สำหรับ format script
 
 ## Requirements
