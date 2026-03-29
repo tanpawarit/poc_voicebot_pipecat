@@ -1,16 +1,15 @@
-# System Architecture — POC Voicebot (OpenAI Cascaded)
+# System Architecture — POC Voicebot (Gemini Live)
 
 ## Overview
 
-ระบบนี้เป็น voicebot แบบ real-time สำหรับ POC debt collection ภาษาไทย โดยใช้ `Pipecat` เป็น pipeline runtime, `FastAPI` เป็น server, `SmallWebRTC` เป็น transport, และ OpenAI สำหรับ `STT + intent classification + TTS`
+ระบบนี้เป็น voicebot แบบ real-time สำหรับ POC debt collection ภาษาไทย โดยใช้ `Pipecat` เป็น pipeline runtime, `FastAPI` เป็น server, `SmallWebRTC` เป็น transport, และ `Gemini Live` สำหรับ native audio conversation
 
-แนวคิดหลักของเวอร์ชันนี้คือ deterministic flow:
+แนวคิดหลักของเวอร์ชันนี้คือ one-turn scripted flow:
 
-- bot เปิดบทสนทนาด้วยสคริปต์คงที่
-- รับเสียงลูกค้า 1 turn
-- แปลงเสียงเป็นข้อความ
-- classify intent ให้เหลือเพียง 4 ค่า
-- route ไปยังสคริปต์ตอบกลับที่ fix ไว้
+- bot เปิดบทสนทนาด้วย opening script
+- ฟังคำตอบลูกค้า 1 turn
+- ให้ Gemini ตีความ intent ภายในจากเสียงตอบกลับ
+- พูด scripted response ที่ตรงกับ branch
 - จบสาย
 
 ## High-Level Architecture
@@ -22,10 +21,9 @@ FastAPI /api/offer
   -> run_bot(connection)
 Pipecat Pipeline
   -> transport.input()
-  -> VADProcessor(Silero)
-  -> OpenAISTTService
-  -> CollectionRouterProcessor
-  -> OpenAITTSService
+  -> GeminiContextBootstrapProcessor
+  -> GeminiLiveLLMService
+  -> EndCallAfterResponsesProcessor
   -> transport.output()
 ```
 
@@ -48,42 +46,18 @@ Pipecat Pipeline
 - `app_s2s/bot.py`
 - ใช้ `PipelineTask` + `PipelineRunner`
 - เปิด session ด้วย mock CRM state จาก `common/flows/mock_crm.py`
-- สร้าง flow definition จาก `common/flows/collection.py`
-- ใช้ OpenAI classifier + router processor ในการ route transcript
+- สร้าง Gemini system instruction จาก `common/flows/collection.py`
+- seed context ว่างหนึ่งครั้งเพื่อให้ Gemini เปิดสายเอง
+- ปิดสายหลัง `LLMFullResponseEndFrame` ครบ 2 ครั้ง: opening + scripted reply
 
-### 4. Deterministic Flow Definition
+### 4. Scripted Flow Definition
 
 - `common/flows/collection.py`
 - มีเพียง:
   - `opening`
   - `responses[target|busy|other_person|voicemail]`
   - `fallback`
-
-ไม่มี `FlowManager`, ไม่มี node transition, และไม่มี tool calling
-
-### 5. Intent Classification
-
-- `common/openai_intent_classifier.py`
-- ใช้ `AsyncOpenAI.responses.parse(...)`
-- structured output คืน enum เดียวคือ:
-  - `target`
-  - `busy`
-  - `other_person`
-  - `voicemail`
-
-### 6. Router Processor
-
-- `common/processors/collection_router.py`
-- เมื่อได้รับ `StartFrame`:
-  - ส่ง opening script ผ่าน `TTSSpeakFrame`
-- เมื่อได้รับ final `TranscriptionFrame`:
-  - classify intent
-  - map intent ไปยัง scripted response
-  - ส่ง reply ผ่าน `TTSSpeakFrame`
-  - ส่ง `EndFrame`
-- ถ้า transcript ว่าง หรือ classifier/STT ล้มเหลว:
-  - ใช้ fallback script
-  - ส่ง `EndFrame`
+- script เดิมถูก compile เป็น system instruction เพื่อให้ Gemini Live ทำ flow เดิมแบบ native audio
 
 ## Collection POC Flow
 
@@ -102,22 +76,15 @@ opening
 
 | Env Var | Default | Purpose |
 |---|---|---|
-| `OPENAI_API_KEY` | required | OpenAI auth |
-| `OPENAI_BASE_URL` | empty | custom endpoint ถ้ามี |
-| `OPENAI_STT_MODEL` | `gpt-4o-transcribe` | STT model |
-| `OPENAI_INTENT_MODEL` | `gpt-4o-mini` | intent classifier |
-| `OPENAI_TTS_MODEL` | `gpt-4o-mini-tts` | TTS model |
-| `OPENAI_TTS_VOICE` | `sage` | TTS voice |
-| `OPENAI_TTS_SPEED` | `0.94` | speaking rate |
-| `OPENAI_TTS_INSTRUCTIONS` | natural Thai preset | speaking style instructions |
+| `GEMINI_API_KEY` | required | Gemini auth |
+| `GOOGLE_API_KEY` | optional fallback | ใช้แทน `GEMINI_API_KEY` ได้ |
+| `GEMINI_LIVE_MODEL` | `gemini-3.1-flash-live-preview` | Gemini Live model |
+| `GEMINI_LIVE_VOICE` | `Aoede` | voice name |
 | `FLOW` | `collection` | active flow |
 | `S2S_PORT` | `7861` | HTTPS port |
-| `VAD_STOP_SECS` | `0.2` | silence threshold |
-| `TURN_END_TIMEOUT_SECS` | `2.0` | observer timeout |
 
 ## Notes
 
-- STT ใช้ `OpenAISTTService` แบบ cascaded ไม่ใช่ realtime omni session
-- TTS ใช้ `OpenAITTSService` แยกต่างหาก
-- voice และ speaking style เป็น configurable ผ่าน env เพื่อปรับความเป็นธรรมชาติของภาษาไทยได้ง่ายขึ้น
+- ไม่มี local VAD, STT, intent-classifier, หรือ TTS แยกแล้ว
+- intent routing ยังเป็น deterministic ในเชิง business flow แต่ถูกอธิบายผ่าน Gemini system instruction แทน processor chain เดิม
 - repo นี้ตั้งใจเป็น happy-case POC ที่เรียบง่าย ไม่ครอบคลุม collection workflow เต็มรูปแบบ

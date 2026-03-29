@@ -20,11 +20,11 @@ class DummyConnection:
 class ServerTests(unittest.TestCase):
     def setUp(self):
         self.client = TestClient(server.app)
-        self.openai_api_key = server.settings.openai_api_key
-        server.settings.openai_api_key = "test-key"
+        self.gemini_api_key = server.settings.gemini_api_key
+        server.settings.gemini_api_key = "test-key"
 
     def tearDown(self):
-        server.settings.openai_api_key = self.openai_api_key
+        server.settings.gemini_api_key = self.gemini_api_key
 
     def test_offer_validation_rejects_missing_sdp(self):
         response = self.client.post("/api/offer", json={"type": "offer"})

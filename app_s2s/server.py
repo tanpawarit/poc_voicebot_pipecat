@@ -23,7 +23,7 @@ class OfferRequest(BaseModel):
 
 @app.get("/", response_class=HTMLResponse)
 async def index() -> str:
-    return get_html_page("Pipecat S2S Bot", settings.flow_name)
+    return get_html_page("Pipecat Gemini Live Bot", settings.flow_name)
 
 
 @app.post("/api/offer")

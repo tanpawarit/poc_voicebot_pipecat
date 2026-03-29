@@ -3,7 +3,11 @@ import unittest
 from pipecat.frames.frames import EndFrame, StartFrame, TTSSpeakFrame, TranscriptionFrame
 from pipecat.processors.frame_processor import FrameDirection
 
-from common.flows.collection import CollectionIntent, build_collection_flow
+from common.flows.collection import (
+    CollectionIntent,
+    build_collection_flow,
+    build_collection_gemini_system_instruction,
+)
 from common.processors.collection_router import CollectionRouterProcessor
 
 
@@ -38,6 +42,22 @@ class CollectionFlowTests(unittest.TestCase):
             flow.response_for(CollectionIntent.BUSY),
             flow.fallback,
         )
+
+    def test_gemini_instruction_embeds_the_scripted_responses(self):
+        state = {
+            "customer_name": "สมชาย ใจดี",
+            "first_name": "สมชาย",
+            "lic_no": "กข 1234",
+            "province": "กรุงเทพมหานคร",
+        }
+        flow = build_collection_flow(state)
+
+        instruction = build_collection_gemini_system_instruction(state)
+
+        self.assertIn(flow.opening, instruction)
+        self.assertIn(flow.response_for(CollectionIntent.TARGET), instruction)
+        self.assertIn(flow.response_for(CollectionIntent.BUSY), instruction)
+        self.assertIn(flow.fallback, instruction)
 
 
 class CollectionRouterTests(unittest.IsolatedAsyncioTestCase):

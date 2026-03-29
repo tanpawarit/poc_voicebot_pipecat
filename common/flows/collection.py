@@ -1,4 +1,4 @@
-"""Deterministic collection flow definition for the OpenAI cascaded POC."""
+"""Collection flow definition and Gemini Live prompt builder for the current POC."""
 
 from dataclasses import dataclass
 from enum import StrEnum
@@ -65,8 +65,40 @@ def build_collection_flow(state: Mapping[str, object] | None = None) -> Collecti
     )
 
 
+def build_collection_gemini_system_instruction(
+    state: Mapping[str, object] | None = None,
+) -> str:
+    """Build a strict Gemini Live instruction for the current one-turn collection POC."""
+    s = state or {}
+    flow = build_collection_flow(s)
+    customer_name = str(s.get("customer_name", "")).strip() or "ลูกค้าที่ต้องการติดต่อ"
+    return (
+        "You are a Thai voice bot for a deterministic debt-collection POC.\n"
+        "Follow the scripted call flow exactly and do not improvise.\n\n"
+        f"Target customer name: {customer_name}\n\n"
+        "Rules:\n"
+        "- Speak naturally in Thai for a phone call.\n"
+        f"- Start the call immediately with this exact opening line: {flow.opening}\n"
+        "- After the callee replies once, decide internally between exactly four intents:\n"
+        "  target = the requested person is speaking or confirms they are the requested person.\n"
+        "  busy = the requested person is speaking but asks for a callback or says they are busy.\n"
+        "  other_person = someone else answered or says the requested person is unavailable.\n"
+        "  voicemail = an answering machine, automated greeting, or prompt to leave a message.\n"
+        "- Then reply with exactly one matching scripted line and nothing else:\n"
+        f"  target: {flow.response_for(CollectionIntent.TARGET)}\n"
+        f"  busy: {flow.response_for(CollectionIntent.BUSY)}\n"
+        f"  other_person: {flow.response_for(CollectionIntent.OTHER_PERSON)}\n"
+        f"  voicemail: {flow.response_for(CollectionIntent.VOICEMAIL)}\n"
+        f"- If you are unsure, use this fallback exactly: {flow.fallback}\n"
+        "- Do not ask any extra questions beyond the scripted response.\n"
+        "- Do not add filler, paraphrase the script, or continue the conversation after the scripted response.\n"
+        "- After the scripted response, stay silent and wait for the call to end.\n"
+    )
+
+
 __all__ = [
     "CollectionFlowDefinition",
     "CollectionIntent",
+    "build_collection_gemini_system_instruction",
     "build_collection_flow",
 ]

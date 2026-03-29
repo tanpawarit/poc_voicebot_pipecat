@@ -6,37 +6,28 @@ from common.config import Settings
 
 
 class SettingsTests(unittest.TestCase):
-    def test_validate_rejects_missing_openai_api_key(self):
+    def test_validate_rejects_missing_gemini_api_key(self):
         with self.assertRaises(RuntimeError):
-            Settings(openai_api_key="", vad_stop_secs=0.2, turn_end_timeout_secs=2.0).validate()
+            Settings(gemini_api_key="").validate()
 
-    def test_validate_rejects_invalid_turn_tuning(self):
-        with self.assertRaises(RuntimeError):
-            Settings(openai_api_key="key", vad_stop_secs=0).validate()
+    def test_validate_accepts_default_gemini_runtime_settings(self):
+        Settings(gemini_api_key="key").validate()
 
-        with self.assertRaises(RuntimeError):
-            Settings(openai_api_key="key", turn_end_timeout_secs=0).validate()
-
-        with self.assertRaises(RuntimeError):
-            Settings(openai_api_key="key", openai_tts_speed=0).validate()
-
-    def test_validate_accepts_default_openai_runtime_settings(self):
-        Settings(
-            openai_api_key="key",
-            vad_stop_secs=0.2,
-            turn_end_timeout_secs=2.0,
-        ).validate()
-
-    def test_openai_model_defaults_are_set(self):
+    def test_gemini_model_defaults_are_set(self):
         with patch.dict(config_module.os.environ, {}, clear=True):
-            settings = Settings(openai_api_key="key")
+            settings = Settings(gemini_api_key="key")
 
-        self.assertEqual(settings.openai_stt_model, "gpt-4o-transcribe")
-        self.assertEqual(settings.openai_intent_model, "gpt-4o-mini")
-        self.assertEqual(settings.openai_tts_model, "gpt-4o-mini-tts")
-        self.assertEqual(settings.openai_tts_voice, "coral")
-        self.assertEqual(settings.openai_tts_speed, 1.2)
-        self.assertIn("natural Thai", settings.openai_tts_instructions)
+        self.assertEqual(
+            settings.gemini_live_model,
+            "gemini-3.1-flash-live-preview",
+        )
+        self.assertEqual(settings.gemini_live_voice, "Aoede")
+
+    def test_google_api_key_is_accepted_as_fallback(self):
+        with patch.dict(config_module.os.environ, {"GOOGLE_API_KEY": "google-key"}, clear=True):
+            settings = Settings()
+
+        self.assertEqual(settings.gemini_api_key, "google-key")
 
 
 if __name__ == "__main__":
