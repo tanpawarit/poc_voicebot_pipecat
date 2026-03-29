@@ -23,10 +23,13 @@ class CollectionIntent(StrEnum):
 @dataclass(frozen=True)
 class CollectionFlowDefinition:
     opening: str
+    verify: str
     responses: dict[CollectionIntent, str]
     fallback: str
 
     def response_for(self, intent: CollectionIntent) -> str:
+        if intent == CollectionIntent.TARGET:
+            return self.verify
         return self.responses.get(intent, self.fallback)
 
 
@@ -35,7 +38,7 @@ _OPENING_TEMPLATE = (
     "ขอเรียนสายคุณ {customer_name} ค่ะ"
 )
 
-_TARGET_TEMPLATE = (
+_VERIFY_SCRIPT_TEMPLATE = (
     "ขอบคุณค่ะ น้องใจขออนุญาตยืนยันข้อมูลนะคะ "
     "คุณ {first_name} เป็นเจ้าของรถทะเบียน {lic_no} จังหวัด {province} ใช่ไหมคะ"
 )
@@ -55,8 +58,8 @@ def build_collection_flow(state: Mapping[str, object] | None = None) -> Collecti
     fallback = _fmt(_BUSY_TEMPLATE, s)
     return CollectionFlowDefinition(
         opening=_fmt(_OPENING_TEMPLATE, s),
+        verify=_fmt(_VERIFY_SCRIPT_TEMPLATE, s),
         responses={
-            CollectionIntent.TARGET: _fmt(_TARGET_TEMPLATE, s),
             CollectionIntent.BUSY: _fmt(_BUSY_TEMPLATE, s),
             CollectionIntent.OTHER_PERSON: _fmt(_OTHER_PERSON_TEMPLATE, s),
             CollectionIntent.VOICEMAIL: _fmt(_VOICEMAIL_TEMPLATE, s),
@@ -68,7 +71,7 @@ def build_collection_flow(state: Mapping[str, object] | None = None) -> Collecti
 def build_collection_gemini_system_instruction(
     state: Mapping[str, object] | None = None,
 ) -> str:
-    """Build a strict Gemini Live instruction for the current one-turn collection POC."""
+    """Build a strict Gemini Live instruction for the opening + verify collection POC."""
     s = state or {}
     flow = build_collection_flow(s)
     customer_name = str(s.get("customer_name", "")).strip() or "ลูกค้าที่ต้องการติดต่อ"
@@ -85,7 +88,7 @@ def build_collection_gemini_system_instruction(
         "  other_person = someone else answered or says the requested person is unavailable.\n"
         "  voicemail = an answering machine, automated greeting, or prompt to leave a message.\n"
         "- Then reply with exactly one matching scripted line and nothing else:\n"
-        f"  target: {flow.response_for(CollectionIntent.TARGET)}\n"
+        f"  target -> verify step: {flow.verify}\n"
         f"  busy: {flow.response_for(CollectionIntent.BUSY)}\n"
         f"  other_person: {flow.response_for(CollectionIntent.OTHER_PERSON)}\n"
         f"  voicemail: {flow.response_for(CollectionIntent.VOICEMAIL)}\n"
@@ -96,9 +99,26 @@ def build_collection_gemini_system_instruction(
     )
 
 
+def build_collection_gemini_initial_messages(
+    state: Mapping[str, object] | None = None,
+) -> list[dict[str, str]]:
+    """Seed Gemini Live with a kickoff turn so it speaks the opening first."""
+    flow = build_collection_flow(state or {})
+    return [
+        {
+            "role": "user",
+            "content": (
+                "The callee has just answered the phone. Start the call now and reply with "
+                f"this exact opening line only: {flow.opening}"
+            ),
+        }
+    ]
+
+
 __all__ = [
     "CollectionFlowDefinition",
     "CollectionIntent",
+    "build_collection_gemini_initial_messages",
     "build_collection_gemini_system_instruction",
     "build_collection_flow",
 ]

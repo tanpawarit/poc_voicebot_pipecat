@@ -2,7 +2,7 @@
 
 POC voicebot ภาษาไทยสำหรับงานโทรติดตามหนี้ โดยใช้ `Pipecat` + `FastAPI` + `Gemini Live` + `SmallWebRTC`
 
-runtime หลักของ repo ตอนนี้เป็น Gemini Live ล้วนๆ:
+runtime ของ repo ตอนนี้มีเส้นทางเดียวคือ Gemini Live:
 
 `transport.input -> Gemini Live -> transport.output`
 
@@ -11,7 +11,8 @@ flow ปัจจุบันยังคงเป็น `collection` แบบ 
 - bot พูด opening ทันที
 - ฟังคำตอบลูกค้า 1 turn
 - ตีความเป็น `target`, `busy`, `other_person`, หรือ `voicemail` ภายใน Gemini
-- พูด scripted reply ตาม branch
+- ถ้าเป็น `target` จะเข้าสู่ step `verify`
+- ถ้าไม่ใช่ `target` จะพูด scripted close ตาม branch
 - จบสายทันที
 
 ## ไฟล์สำคัญ
@@ -45,6 +46,7 @@ cp .env.example .env
 GEMINI_API_KEY="your-gemini-api-key"
 GEMINI_LIVE_MODEL="gemini-3.1-flash-live-preview"
 GEMINI_LIVE_VOICE="Aoede"
+GEMINI_LIVE_LANGUAGE="th-TH"
 FLOW="collection"
 HOST="0.0.0.0"
 S2S_PORT="7861"
@@ -74,7 +76,8 @@ https://localhost:7861/
 
 - server ใช้ TLS จากไฟล์ใน `certs/`
 - browser อาจเตือนเรื่อง self-signed certificate ในครั้งแรก
-- opening script จะถูกพูดทันทีเมื่อ session เริ่ม
+- opening script จะถูกพูดทันทีเมื่อ session เริ่มจาก initial Gemini kickoff message
+- runtime จะ pin ทั้ง speech และ transcription language เป็น `th-TH` โดย default
 - หลังจากลูกค้าตอบ 1 turn ระบบจะตอบกลับตาม script และปิดสาย
 
 เช็ก health endpoint:
@@ -83,20 +86,22 @@ https://localhost:7861/
 https://localhost:7861/api/health
 ```
 
-## Flow ปัจจุบัน
+## Runtime ปัจจุบัน
 
-`collection` ในเวอร์ชันนี้เป็น scripted Gemini Live runtime:
+`collection` ในเวอร์ชันนี้รันแบบ scripted Gemini Live:
 
-`opening -> infer target|busy|other_person|voicemail -> scripted reply -> end`
+`opening -> infer target|busy|other_person|voicemail -> verify|scripted close -> end`
 
 สคริปต์แต่ละ branch:
 
-- `target` ยืนยันตัวตนด้วยทะเบียนรถ
+- `target` เข้าสู่ step `verify` เพื่อยืนยันตัวตนด้วยทะเบียนรถ
 - `busy` แจ้งว่าจะติดต่อใหม่ภายหลัง
 - `other_person` ขอโทษและวางสาย
 - `voicemail` ฝากข้อความสั้น ๆ ว่าจะติดต่อใหม่
 
 ถ้า Gemini ไม่มั่นใจ intent ระบบจะใช้ fallback script เดียวกับ `busy`
+
+ไม่มี deterministic router, classifier chain, หรือ STT/TTS แยกใน runtime หลักแล้ว
 
 ## Troubleshooting
 
@@ -113,5 +118,5 @@ https://localhost:7861/api/health
 ## Tests
 
 ```bash
-uv run python -m pytest -q -p no:cacheprovider
+uv run python -m unittest discover -s tests
 ```

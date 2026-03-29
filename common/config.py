@@ -21,6 +21,9 @@ class Settings:
     gemini_live_voice: str = field(
         default_factory=lambda: os.environ.get("GEMINI_LIVE_VOICE", "Aoede")
     )
+    gemini_live_language: str = field(
+        default_factory=lambda: os.environ.get("GEMINI_LIVE_LANGUAGE", "th-TH")
+    )
     flow_name: str = field(default_factory=lambda: os.environ.get("FLOW", "collection"))
     host: str = field(default_factory=lambda: os.environ.get("HOST", "0.0.0.0"))
     s2s_port: int = field(default_factory=lambda: int(os.environ.get("S2S_PORT", "7861")))

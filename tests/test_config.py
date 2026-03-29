@@ -22,12 +22,19 @@ class SettingsTests(unittest.TestCase):
             "gemini-3.1-flash-live-preview",
         )
         self.assertEqual(settings.gemini_live_voice, "Aoede")
+        self.assertEqual(settings.gemini_live_language, "th-TH")
 
     def test_google_api_key_is_accepted_as_fallback(self):
         with patch.dict(config_module.os.environ, {"GOOGLE_API_KEY": "google-key"}, clear=True):
             settings = Settings()
 
         self.assertEqual(settings.gemini_api_key, "google-key")
+
+    def test_gemini_language_can_be_overridden_from_env(self):
+        with patch.dict(config_module.os.environ, {"GEMINI_LIVE_LANGUAGE": "en-US"}, clear=True):
+            settings = Settings(gemini_api_key="key")
+
+        self.assertEqual(settings.gemini_live_language, "en-US")
 
 
 if __name__ == "__main__":

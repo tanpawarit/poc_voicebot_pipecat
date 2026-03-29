@@ -10,7 +10,11 @@ from pipecat.frames.frames import (
 from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.processors.frame_processor import FrameDirection
 
-from app_s2s.bot import GeminiContextBootstrapProcessor, EndCallAfterResponsesProcessor
+from app_s2s.bot import (
+    EndCallAfterResponsesProcessor,
+    GeminiContextBootstrapProcessor,
+    LanguagePinnedGeminiLiveLLMService,
+)
 
 
 class BotProcessorsTests(unittest.IsolatedAsyncioTestCase):
@@ -59,6 +63,20 @@ class BotProcessorsTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsInstance(pushed[1][0], LLMFullResponseEndFrame)
         self.assertIsInstance(pushed[2][0], EndFrame)
+
+    async def test_language_pinned_gemini_service_hints_thai_transcription(self):
+        service = LanguagePinnedGeminiLiveLLMService(
+            api_key="test-key",
+            settings=LanguagePinnedGeminiLiveLLMService.Settings(
+                model="test-model",
+                voice="Aoede",
+                language="th-TH",
+            ),
+        )
+
+        transcription_config = service._build_audio_transcription_config()
+
+        self.assertEqual(transcription_config.language_codes, ["th-TH"])
 
 
 if __name__ == "__main__":

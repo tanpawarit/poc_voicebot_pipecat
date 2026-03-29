@@ -9,7 +9,8 @@
 - bot เปิดบทสนทนาด้วย opening script
 - ฟังคำตอบลูกค้า 1 turn
 - ให้ Gemini ตีความ intent ภายในจากเสียงตอบกลับ
-- พูด scripted response ที่ตรงกับ branch
+- ถ้าเป็น `target` ให้พูด step `verify`
+- ถ้าไม่ใช่ `target` ให้พูด scripted close ที่ตรงกับ branch
 - จบสาย
 
 ## High-Level Architecture
@@ -47,7 +48,7 @@ Pipecat Pipeline
 - ใช้ `PipelineTask` + `PipelineRunner`
 - เปิด session ด้วย mock CRM state จาก `common/flows/mock_crm.py`
 - สร้าง Gemini system instruction จาก `common/flows/collection.py`
-- seed context ว่างหนึ่งครั้งเพื่อให้ Gemini เปิดสายเอง
+- seed initial kickoff message หนึ่งครั้งเพื่อให้ Gemini เปิดสายเอง
 - ปิดสายหลัง `LLMFullResponseEndFrame` ครบ 2 ครั้ง: opening + scripted reply
 
 ### 4. Scripted Flow Definition
@@ -55,7 +56,8 @@ Pipecat Pipeline
 - `common/flows/collection.py`
 - มีเพียง:
   - `opening`
-  - `responses[target|busy|other_person|voicemail]`
+  - `verify`
+  - `responses[busy|other_person|voicemail]`
   - `fallback`
 - script เดิมถูก compile เป็น system instruction เพื่อให้ Gemini Live ทำ flow เดิมแบบ native audio
 
@@ -85,6 +87,6 @@ opening
 
 ## Notes
 
-- ไม่มี local VAD, STT, intent-classifier, หรือ TTS แยกแล้ว
-- intent routing ยังเป็น deterministic ในเชิง business flow แต่ถูกอธิบายผ่าน Gemini system instruction แทน processor chain เดิม
+- ไม่มี local VAD, STT, หรือ TTS แยกใน runtime หลัก
+- intent routing ยังเป็น deterministic ในเชิง business flow แต่ถูกอธิบายผ่าน Gemini system instruction เพียงเส้นทางเดียว
 - repo นี้ตั้งใจเป็น happy-case POC ที่เรียบง่าย ไม่ครอบคลุม collection workflow เต็มรูปแบบ
