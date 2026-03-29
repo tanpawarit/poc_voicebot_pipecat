@@ -6,12 +6,13 @@ POC voicebot ภาษาไทยสำหรับงานโทรติด�
 
 `transport.input -> VAD -> OpenAI STT -> intent router -> OpenAI TTS -> transport.output`
 
-Flow ที่มีอยู่คือ `collection` แบบ happy-case POC:
+Flow ที่มีอยู่คือ `collection` แบบ 2-step deterministic POC:
 
 - bot พูด opening ก่อน
-- ฟังคำตอบลูกค้า 1 turn
-- classify เป็น `target`, `busy`, `other_person`, หรือ `voicemail`
-- พูดตาม script ที่ route ได้
+- ฟังคำตอบลูกค้าใน stage `opening`
+- ถ้าเป็น target จะถามต่อใน stage `verify`
+- ถ้าไม่มีคำตอบที่ใช้ได้ในแต่ละ stage จะถามซ้ำได้ 1 ครั้งก่อน fallback
+- route ไปยัง `busy`, `other_person`, `voicemail`, `faq`, `fallback`, หรือ `overdue`
 - จบสายทันที
 
 ## ไฟล์สำคัญ
@@ -81,7 +82,7 @@ https://localhost:7861/
 - server ใช้ TLS จากไฟล์ใน `certs/`
 - browser อาจเตือนเรื่อง self-signed certificate ในครั้งแรก
 - opening script จะถูกพูดทันทีเมื่อ session เริ่ม
-- หลังจากลูกค้าตอบ 1 turn ระบบจะ route ไปยังสคริปต์ตอบกลับและปิดสาย
+- หลังจากลูกค้าตอบ ระบบจะ route ตาม stage ปัจจุบัน (`opening` หรือ `verify`)
 - ถ้าเสียงยังแข็งเกินไป ให้ลองปรับ `OPENAI_TTS_VOICE`, `OPENAI_TTS_SPEED`, และ `OPENAI_TTS_INSTRUCTIONS`
 
 เช็ก health endpoint:
@@ -92,18 +93,18 @@ https://localhost:7861/api/health
 
 ## Flow ปัจจุบัน
 
-`collection` ในเวอร์ชันนี้ไม่ใช่ multi-node LLM flow แล้ว แต่เป็น deterministic routing:
+`collection` ในเวอร์ชันนี้ไม่ใช่ multi-node LLM flow แล้ว แต่เป็น deterministic routing แบบ checkpoint:
 
-`opening -> classify transcript -> target|busy|other_person|voicemail -> scripted reply -> end`
+`opening -> verify -> overdue`
 
-สคริปต์แต่ละ branch:
+สคริปต์หลักในเวอร์ชันนี้:
 
-- `target` ยืนยันตัวตนด้วยทะเบียนรถ
-- `busy` แจ้งว่าจะติดต่อใหม่ภายหลัง
-- `other_person` ขอโทษและวางสาย
-- `voicemail` ฝากข้อความสั้น ๆ ว่าจะติดต่อใหม่
+- `opening` ขอเรียนสายลูกค้า
+- `verify` ยืนยันข้อมูลเจ้าของรถ
+- `overdue` เป็น scripted handoff หลังยืนยันตัวตนสำเร็จ
+- `busy`, `other_person`, `voicemail`, `faq`, `fallback` เป็นทางออกของแต่ละ checkpoint
 
-ถ้า STT หรือ intent classification ล้มเหลว ระบบจะใช้ fallback script เดียวกับ `busy`
+ถ้า STT หรือ intent classification ล้มเหลว ระบบจะใช้ fallback script และปิดสาย
 
 ## Troubleshooting
 

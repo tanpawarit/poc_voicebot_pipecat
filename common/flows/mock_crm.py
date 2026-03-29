@@ -12,6 +12,8 @@ MOCK_CUSTOMER: dict[str, str | int] = {
     "phone": "0812345678",
 
     # ── ข้อมูลรถ ──────────────────────────────────────────────────────────
+    "car_brand_name": "Toyota",
+    "car_model_name": "Yaris Ativ",
     "lic_no": "กข 1234",
     "province": "กรุงเทพมหานคร",
 

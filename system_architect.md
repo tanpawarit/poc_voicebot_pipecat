@@ -7,9 +7,9 @@
 แนวคิดหลักของเวอร์ชันนี้คือ deterministic flow:
 
 - bot เปิดบทสนทนาด้วยสคริปต์คงที่
-- รับเสียงลูกค้า 1 turn
+- รับเสียงลูกค้าแบบ checkpoint-by-checkpoint
 - แปลงเสียงเป็นข้อความ
-- classify intent ให้เหลือเพียง 4 ค่า
+- classify opening intent และ verify intent แยกกัน
 - route ไปยังสคริปต์ตอบกลับที่ fix ไว้
 - จบสาย
 
@@ -54,10 +54,13 @@ Pipecat Pipeline
 ### 4. Deterministic Flow Definition
 
 - `common/flows/collection.py`
-- มีเพียง:
+- มีสคริปต์สำหรับ:
   - `opening`
-  - `responses[target|busy|other_person|voicemail]`
-  - `fallback`
+  - `opening_retry`
+  - `verify`
+  - `verify_retry`
+  - `overdue`
+  - `busy|other_person|voicemail|faq|fallback`
 
 ไม่มี `FlowManager`, ไม่มี node transition, และไม่มี tool calling
 
@@ -65,11 +68,9 @@ Pipecat Pipeline
 
 - `common/openai_intent_classifier.py`
 - ใช้ `AsyncOpenAI.responses.parse(...)`
-- structured output คืน enum เดียวคือ:
-  - `target`
-  - `busy`
-  - `other_person`
-  - `voicemail`
+- structured output แยก 2 checkpoint:
+  - opening intent: `target|busy|other_person|voicemail|faq|unknown`
+  - verify intent: `confirmed|target_unavailable|third_party_speaking|faq|unknown`
 
 ### 6. Router Processor
 
@@ -77,10 +78,12 @@ Pipecat Pipeline
 - เมื่อได้รับ `StartFrame`:
   - ส่ง opening script ผ่าน `TTSSpeakFrame`
 - เมื่อได้รับ final `TranscriptionFrame`:
-  - classify intent
-  - map intent ไปยัง scripted response
-  - ส่ง reply ผ่าน `TTSSpeakFrame`
-  - ส่ง `EndFrame`
+  - ถ้าอยู่ stage `opening` และ classify ได้ `target` จะส่ง verify prompt แล้วรอฟังต่อ
+  - ถ้าอยู่ stage `verify` และ classify ได้ `confirmed` จะส่ง overdue handoff script
+  - ถ้าเป็น branch อื่นจะส่ง scripted response และ `EndFrame`
+- ถ้า transcript ว่าง:
+  - retry ได้ 1 ครั้งต่อ stage
+  - ถ้าเกิน limit จะ fallback และจบสาย
 - ถ้า transcript ว่าง หรือ classifier/STT ล้มเหลว:
   - ใช้ fallback script
   - ส่ง `EndFrame`
@@ -89,11 +92,19 @@ Pipecat Pipeline
 
 ```text
 opening
-  -> target        -> verify script        -> end
+  -> target        -> verify
   -> busy          -> callback-close       -> end
   -> other_person  -> polite close         -> end
   -> voicemail     -> contact later        -> end
-  -> fallback      -> callback-close       -> end
+  -> faq           -> faq answer           -> end
+  -> fallback      -> fallback close       -> end
+
+verify
+  -> confirmed             -> overdue handoff -> end
+  -> target_unavailable    -> callback-close  -> end
+  -> third_party_speaking  -> polite close    -> end
+  -> faq                   -> faq answer      -> end
+  -> fallback              -> fallback close  -> end
 ```
 
 ## Config
