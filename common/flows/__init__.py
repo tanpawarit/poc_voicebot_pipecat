@@ -1,8 +1,7 @@
-from pipecat_flows import NodeConfig
+from common.flows.collection import CollectionFlowDefinition, build_collection_flow
 
 
-def get_flow(name: str, state: dict | None = None) -> NodeConfig:
+def get_flow(name: str, state: dict | None = None) -> CollectionFlowDefinition:
     if name == "collection":
-        from common.flows.collection import create_initial_node
-        return create_initial_node(state or {})
+        return build_collection_flow(state or {})
     raise ValueError(f"Unknown flow: {name!r}. Available flows: collection")

@@ -1,250 +1,123 @@
-# System Architecture — POC Voicebot (Pipecat S2S)
+# System Architecture — POC Voicebot (OpenAI Cascaded)
 
 ## Overview
 
-A real-time **Speech-to-Speech (S2S) voice bot** built on [Pipecat](https://github.com/pipecat-ai/pipecat) for automated debt-collection calls. The bot persona is **"Nong Jai"** (น้องใจ), an AI agent for Ngern Hai Jai Co., Ltd. (บริษัทเงินให้ใจจำกัด), while the synthesized speaking voice is Gemini Live voice **`"Kore"`**.
+ระบบนี้เป็น voicebot แบบ real-time สำหรับ POC debt collection ภาษาไทย โดยใช้ `Pipecat` เป็น pipeline runtime, `FastAPI` เป็น server, `SmallWebRTC` เป็น transport, และ OpenAI สำหรับ `STT + intent classification + TTS`
 
----
+แนวคิดหลักของเวอร์ชันนี้คือ deterministic flow:
+
+- bot เปิดบทสนทนาด้วยสคริปต์คงที่
+- รับเสียงลูกค้า 1 turn
+- แปลงเสียงเป็นข้อความ
+- classify intent ให้เหลือเพียง 4 ค่า
+- route ไปยังสคริปต์ตอบกลับที่ fix ไว้
+- จบสาย
 
 ## High-Level Architecture
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│  Browser / SIP Client                                       │
-│  (WebRTC audio in/out)                                      │
-└────────────────────┬────────────────────────────────────────┘
-                     │ WebRTC (DTLS-SRTP)
-                     ▼
-┌─────────────────────────────────────────────────────────────┐
-│  FastAPI Server  (HTTPS / WSS, port 7861)                   │
-│  POST /api/offer  →  SmallWebRTCConnection.initialize()     │
-│  Background task →  run_bot(connection)                     │
-└────────────────────┬────────────────────────────────────────┘
-                     │
-                     ▼
-┌─────────────────────────────────────────────────────────────┐
-│  Pipecat Pipeline                                           │
-│                                                             │
-│  transport.input()                                          │
-│       ↓  raw audio frames                                   │
-│  LLMContextAggregatorPair.user()                            │
-│       • Silero VAD detects speech activity                  │
-│       • MinWordsUserTurnStartStrategy starts user turn      │
-│       • TurnAnalyzerUserTurnStopStrategy decides turn end   │
-│       • finalized user text is appended to LLM context      │
-│       ↓                                                     │
-│  GeminiLiveLLMService   (Gemini Live S2S)                   │
-│       • receives audio stream from the pipeline             │
-│       • sends user transcription frames upstream            │
-│       • generates assistant audio with voice "Kore"         │
-│       ↓  audio + assistant transcript                       │
-│  LLMContextAggregatorPair.assistant()                       │
-│       • assistant text is appended to LLM context           │
-│       ↓                                                     │
-│  transport.output()                                         │
-└─────────────────────────────────────────────────────────────┘
+```text
+Browser / SIP Client
+  -> WebRTC
+FastAPI /api/offer
+  -> run_bot(connection)
+Pipecat Pipeline
+  -> transport.input()
+  -> VADProcessor(Silero)
+  -> OpenAISTTService
+  -> CollectionRouterProcessor
+  -> OpenAITTSService
+  -> transport.output()
 ```
 
-At session start, the assistant usually speaks first: `FlowManager.initialize()` sets the `opening` node, that node uses `respond_immediately=True`, and Gemini Live is configured to respond immediately when the initial context is loaded.
+## Runtime Components
 
----
+### 1. Transport
 
-## Component Breakdown
+- `common/transport.py`
+- ใช้ `SmallWebRTCTransport`
+- รับเสียงจาก browser และส่งเสียง bot กลับไป
 
-### 1. Transport Layer — `common/transport.py`
+### 2. Server
 
-| Property | Value |
-|---|---|
-| Protocol | WebRTC via `SmallWebRTCTransport` |
-| ICE | Google STUN (`stun:stun.l.google.com:19302`) |
-| TLS | Self-signed cert (`certs/cert.pem` / `key.pem`) |
-| Audio | Bidirectional (`audio_in_enabled`, `audio_out_enabled`) |
+- `app_s2s/server.py`
+- `POST /api/offer` รับ SDP offer และสร้าง WebRTC session
+- เรียก `app_s2s.bot.run_bot()` เป็น background task
 
-### 2. Server — `app_s2s/server.py`
+### 3. Bot Runtime
 
-| Endpoint | Description |
-|---|---|
-| `GET /` | Serves HTML client page |
-| `POST /api/offer` | Accepts WebRTC SDP offer, spawns bot as background task |
-| `GET /api/health` | Health check |
+- `app_s2s/bot.py`
+- ใช้ `PipelineTask` + `PipelineRunner`
+- เปิด session ด้วย mock CRM state จาก `common/flows/mock_crm.py`
+- สร้าง flow definition จาก `common/flows/collection.py`
+- ใช้ OpenAI classifier + router processor ในการ route transcript
 
-Server is started with `uvicorn` over HTTPS on port **7861** (configurable via `S2S_PORT`).
+### 4. Deterministic Flow Definition
 
-### 3. Bot Pipeline — `app_s2s/bot.py`
+- `common/flows/collection.py`
+- มีเพียง:
+  - `opening`
+  - `responses[target|busy|other_person|voicemail]`
+  - `fallback`
 
-- **LLM**: `GeminiLiveLLMService` — Google Gemini Live (S2S model), voice `"Kore"`, inference on context initialization enabled
-- **Persona**: the words and behavior are driven by the flow prompts in `common/flows/collection.py`; the voice timbre comes from Gemini voice `"Kore"`
-- **VAD**: `SileroVADAnalyzer` with `stop_secs=0.3`
-- **Turn detection**: `LocalSmartTurnAnalyzerV3` (local CPU model) is used inside `TurnAnalyzerUserTurnStopStrategy` to decide when the user has finished speaking
-- **Turn start guard**: `MinWordsUserTurnStartStrategy(min_words=2)` is used to start user turns from transcription; in practice this threshold mainly affects interruptions while the assistant is already speaking
-- **Metrics**: `enable_metrics=True`, `enable_usage_metrics=True`
-- **Turn observer**: `TurnTrackingObserver(turn_end_timeout_secs=2.0)` — logs turn count, duration, and interruption status
-- **First utterance**: the `opening` node uses `respond_immediately=True`, so the assistant normally delivers the greeting first
+ไม่มี `FlowManager`, ไม่มี node transition, และไม่มี tool calling
 
-### 4. Configuration — `common/config.py`
+### 5. Intent Classification
 
-| Env Var | Default | Description |
+- `common/openai_intent_classifier.py`
+- ใช้ `AsyncOpenAI.responses.parse(...)`
+- structured output คืน enum เดียวคือ:
+  - `target`
+  - `busy`
+  - `other_person`
+  - `voicemail`
+
+### 6. Router Processor
+
+- `common/processors/collection_router.py`
+- เมื่อได้รับ `StartFrame`:
+  - ส่ง opening script ผ่าน `TTSSpeakFrame`
+- เมื่อได้รับ final `TranscriptionFrame`:
+  - classify intent
+  - map intent ไปยัง scripted response
+  - ส่ง reply ผ่าน `TTSSpeakFrame`
+  - ส่ง `EndFrame`
+- ถ้า transcript ว่าง หรือ classifier/STT ล้มเหลว:
+  - ใช้ fallback script
+  - ส่ง `EndFrame`
+
+## Collection POC Flow
+
+```text
+opening
+  -> target        -> verify script        -> end
+  -> busy          -> callback-close       -> end
+  -> other_person  -> polite close         -> end
+  -> voicemail     -> contact later        -> end
+  -> fallback      -> callback-close       -> end
+```
+
+## Config
+
+ค่าหลักอยู่ใน `common/config.py`
+
+| Env Var | Default | Purpose |
 |---|---|---|
-| `GOOGLE_API_KEY` | _(required)_ | Gemini API key |
-| `FLOW` | `collection` | Active flow name |
-| `HOST` | `0.0.0.0` | Bind address |
-| `S2S_PORT` | `7861` | Server port |
-| `CASCADED_PORT` | `7860` | Reserved for cascaded mode |
+| `OPENAI_API_KEY` | required | OpenAI auth |
+| `OPENAI_BASE_URL` | empty | custom endpoint ถ้ามี |
+| `OPENAI_STT_MODEL` | `gpt-4o-transcribe` | STT model |
+| `OPENAI_INTENT_MODEL` | `gpt-4o-mini` | intent classifier |
+| `OPENAI_TTS_MODEL` | `gpt-4o-mini-tts` | TTS model |
+| `OPENAI_TTS_VOICE` | `sage` | TTS voice |
+| `OPENAI_TTS_SPEED` | `0.94` | speaking rate |
+| `OPENAI_TTS_INSTRUCTIONS` | natural Thai preset | speaking style instructions |
+| `FLOW` | `collection` | active flow |
+| `S2S_PORT` | `7861` | HTTPS port |
+| `VAD_STOP_SECS` | `0.2` | silence threshold |
+| `TURN_END_TIMEOUT_SECS` | `2.0` | observer timeout |
 
-### 5. Flow Engine — `common/flows/`
+## Notes
 
-Uses [pipecat-flows](https://github.com/pipecat-ai/pipecat-flows) for structured conversation management.
-
-**FlowManager** orchestrates node transitions by:
-1. Injecting CRM state into `flow_manager.state` before initialization
-2. Calling `flow_manager.initialize(initial_node)` to start the first node
-3. Updating the LLM context with the node's **system prompt** + **function schemas**
-4. Triggering the first reply immediately when `respond_immediately=True` on the active node
-
----
-
-## Collection Flow State Machine
-
-Entry point: `create_initial_node()` → `create_opening_node()`
-
-```
-opening ──── target ────► verify ──── confirmed ────► overdue
-         │                        └── not confirmed ─► fallback
-         ├── busy ────────────────────────────────────► end
-         ├── other_person ────────────────────────────► end
-         └── voicemail ───────────────────────────────► end
-
-overdue ──── already_paid ───────────────────────────► paid ──► end
-         ├── agree_to_pay ──────────────────────────► ptp
-         └── refuse ────────────────────────────────► convince
-
-convince ─── agreed ──────────────────────────────► ptp
-          └── refused ──────────────────────────────► refused ──► end
-
-ptp ──────────────────────────────────────────────► thank_you ──► end
-
-any node (no response × 2) ──────────────────────► fallback ──► end
-any node (voicemail detected) ───────────────────► voicemail ──► end
-```
-
-### Node Summary
-
-| Node | Purpose | Function Called |
-|---|---|---|
-| `opening` | Greet and identify who answered | `opening_response` |
-| `verify` | Confirm customer identity via plate number | `verify_response` |
-| `overdue` | Inquire about overdue payment status | `overdue_response` |
-| `ptp` | Secure a Promise-to-Pay (date + amount) | `ptp_response` |
-| `convince` | Persuade customer who initially refused | `convince_response` |
-| `busy` | Record preferred callback time | `busy_response` |
-| `other_person` | Leave message with third party (no debt disclosure) | `other_person_response` |
-| `paid` | Acknowledge already-paid customer | `wrap_up` |
-| `thank_you` | Close after successful PTP | `wrap_up` |
-| `refused` | Close politely after final refusal | `wrap_up` |
-| `voicemail` | Leave brief message on answering machine | `wrap_up` |
-| `fallback` | Handle repeated no-response | `wrap_up` |
-| `end` | Terminate session (`post_actions: end_conversation`) | — |
-
----
-
-## CRM Integration — `common/flows/mock_crm.py`
-
-State injected into `flow_manager.state` before flow initialization:
-
-| Field | Example | Description |
-|---|---|---|
-| `customer_name` | `สมชาย ใจดี` | Full name |
-| `first_name` | `สมชาย` | First name (for verify node) |
-| `phone` | `0812345678` | Phone number |
-| `lic_no` | `กข 1234` | Vehicle plate |
-| `province` | `กรุงเทพมหานคร` | Plate province |
-| `due_date` | `5 มีนาคม 2568` | Overdue billing date |
-| `due_amount` | `8,500` | Amount owed (THB) |
-| `ptp_date` | `31 มีนาคม 2568` | Default PTP date to propose |
-| `deadline` | `2 เมษายน 2568` | Final deadline before legal action |
-| `contract_no` | `CHJ-2024-001234` | Contract reference |
-| `oa_code` | `A888` | OA agent code |
-| `call_attempt` | `1` | Call attempt number |
-
-> **Production note**: Replace `MOCK_CUSTOMER` with a CRM API call keyed by inbound phone number or session metadata.
-
----
-
-## Result Codes
-
-Set in `flow_manager.state["result_code"]` at session end:
-
-| Code | Meaning |
-|---|---|
-| `PTP` | Customer committed to a payment date |
-| `REFUSE` | Customer refused after persuasion |
-| `MSG` | Message left (busy / third party) |
-| `REACHED` | Customer reached, conversation completed normally |
-
----
-
-## Latency Profile
-
-This project does not wire a separate STT service or a separate TTS service into the app pipeline. **Gemini Live (S2S)** bundles user transcription and assistant audio generation into one service. The effective latency stack is:
-
-```
-User speaks
-  → local VAD silence detection         (~300ms, stop_secs=0.3)
-  → local SmartTurn end-of-turn check   (~local CPU, <50ms)
-  → Gemini Live finalizes transcript / begins response
-  → Gemini Live streams assistant audio
-  → transport.output() plays audio
-```
-
-**Estimated TTFB**: ~600ms–900ms under normal network conditions.
-
-### Tunable parameters
-
-| Parameter | Current | Effect of lowering |
-|---|---|---|
-| `stop_secs` | `0.3` | Faster response, higher false-cut risk |
-| `min_words` | `2` | Makes the system more willing to interrupt the assistant on short utterances while it is already talking |
-| `turn_end_timeout_secs` | `2.0` | Marks turns as completed sooner in observer logs/metrics; does not materially change response start time |
-
----
-
-## File Tree
-
-```
-poc_voicebot_pipecat/
-├── app_s2s/
-│   ├── __main__.py          # Entry point
-│   ├── server.py            # FastAPI + uvicorn
-│   └── bot.py               # Pipeline + FlowManager
-├── common/
-│   ├── config.py            # Settings (env vars)
-│   ├── transport.py         # SmallWebRTC factory
-│   ├── logging.py           # Logging setup
-│   ├── html.py              # Client HTML page
-│   ├── session.py           # Session utilities
-│   └── flows/
-│       ├── __init__.py      # Flow registry (get_flow)
-│       ├── collection.py    # Debt-collection flow
-│       └── mock_crm.py      # Mock CRM data
-├── certs/                   # TLS certificates
-├── Dockerfile
-├── docker-compose.yml
-├── pyproject.toml
-└── .env.example
-```
-
----
-
-## Deployment
-
-```bash
-# Local
-uv run python -m app_s2s
-
-# Docker
-docker compose up
-```
-
-Requires:
-- `GOOGLE_API_KEY` in `.env`
-- TLS certs in `certs/` (WebRTC requires HTTPS)
+- STT ใช้ `OpenAISTTService` แบบ cascaded ไม่ใช่ realtime omni session
+- TTS ใช้ `OpenAITTSService` แยกต่างหาก
+- voice และ speaking style เป็น configurable ผ่าน env เพื่อปรับความเป็นธรรมชาติของภาษาไทยได้ง่ายขึ้น
+- repo นี้ตั้งใจเป็น happy-case POC ที่เรียบง่าย ไม่ครอบคลุม collection workflow เต็มรูปแบบ

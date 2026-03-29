@@ -1,8 +1,10 @@
 import logging
+from typing import Literal
 
 import uvicorn
-from fastapi import BackgroundTasks, FastAPI, Request
+from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
+from pydantic import BaseModel
 
 from common.config import settings
 from common.html import get_html_page
@@ -14,24 +16,35 @@ logger = logging.getLogger(__name__)
 app = FastAPI()
 
 
+class OfferRequest(BaseModel):
+    sdp: str
+    type: Literal["offer"]
+
+
 @app.get("/", response_class=HTMLResponse)
 async def index() -> str:
     return get_html_page("Pipecat S2S Bot", settings.flow_name)
 
 
 @app.post("/api/offer")
-async def offer(request: Request, background_tasks: BackgroundTasks) -> dict:
+async def offer(body: OfferRequest, background_tasks: BackgroundTasks) -> dict:
     settings.validate()
-    body = await request.json()
 
     connection = create_connection()
-    await connection.initialize(sdp=body["sdp"], type=body["type"])
+    try:
+        await connection.initialize(sdp=body.sdp, type=body.type)
+    except Exception as exc:
+        logger.warning("Invalid WebRTC offer payload", exc_info=exc)
+        raise HTTPException(status_code=400, detail="Invalid WebRTC offer") from exc
 
     from app_s2s.bot import run_bot
 
-    background_tasks.add_task(run_bot, connection)
+    answer = connection.get_answer()
+    if not answer:
+        raise HTTPException(status_code=502, detail="Failed to initialize WebRTC session")
 
-    return connection.get_answer()
+    background_tasks.add_task(run_bot, connection)
+    return answer
 
 
 @app.get("/api/health")

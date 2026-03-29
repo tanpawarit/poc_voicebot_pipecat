@@ -144,7 +144,7 @@ canvas { width: 100%; height: 100%; }
     </div>
 </div>
 
-<audio id="bot-audio" autoplay></audio>
+<audio id="bot-audio" autoplay playsinline></audio>
 
 <script>
 let pc = null;
@@ -152,6 +152,8 @@ let localStream = null;
 let audioCtx = null;
 let analyser = null;
 let animFrame = null;
+let botAudioCtx = null;
+let botAnimFrame = null;
 let durationTimer = null;
 let startTime = null;
 
@@ -205,6 +207,17 @@ function stopDuration() {
     document.getElementById('duration').textContent = '--:--';
 }
 
+function stopBotAudioMonitor() {
+    if (botAnimFrame) {
+        cancelAnimationFrame(botAnimFrame);
+        botAnimFrame = null;
+    }
+    if (botAudioCtx) {
+        botAudioCtx.close();
+        botAudioCtx = null;
+    }
+}
+
 function setupVisualizer(stream) {
     audioCtx = new AudioContext();
     analyser = audioCtx.createAnalyser();
@@ -243,6 +256,49 @@ function setupVisualizer(stream) {
     draw();
 }
 
+async function attachBotAudio(stream) {
+    const botAudio = document.getElementById('bot-audio');
+    stopBotAudioMonitor();
+    botAudio.pause();
+    botAudio.srcObject = stream;
+
+    try {
+        await botAudio.play();
+        logEvent('Bot audio playback started');
+    } catch (e) {
+        logEvent('Bot audio playback blocked: ' + e.message);
+    }
+
+    botAudioCtx = new AudioContext();
+    if (botAudioCtx.state === 'suspended') {
+        await botAudioCtx.resume();
+    }
+
+    const botSource = botAudioCtx.createMediaStreamSource(stream);
+    const botAnalyser = botAudioCtx.createAnalyser();
+    botAnalyser.fftSize = 256;
+    botSource.connect(botAnalyser);
+    const botData = new Uint8Array(botAnalyser.frequencyBinCount);
+
+    function checkBot() {
+        botAnimFrame = requestAnimationFrame(checkBot);
+        botAnalyser.getByteFrequencyData(botData);
+        const avg = botData.reduce((a, b) => a + b, 0) / botData.length;
+        const orb = document.getElementById('orb');
+        if (avg > 10) {
+            orb.className = 'orb speaking';
+            setLabel('agent speaking');
+            setStatus(null, '<span class="status-dot green"></span>Speaking');
+        } else if (orb.className === 'orb speaking') {
+            orb.className = 'orb listening';
+            setLabel('listening');
+            setStatus(null, '<span class="status-dot green"></span>Listening');
+        }
+    }
+
+    checkBot();
+}
+
 async function startBot() {
     const btn = document.getElementById('start-btn');
     const deviceId = document.getElementById('mic-select').value;
@@ -262,32 +318,8 @@ async function startBot() {
         });
 
         pc.ontrack = (event) => {
-            document.getElementById('bot-audio').srcObject = event.streams[0];
             logEvent('Bot audio track received');
-
-            const botCtx = new AudioContext();
-            const botSource = botCtx.createMediaStreamSource(event.streams[0]);
-            const botAnalyser = botCtx.createAnalyser();
-            botAnalyser.fftSize = 256;
-            botSource.connect(botAnalyser);
-            const botData = new Uint8Array(botAnalyser.frequencyBinCount);
-
-            function checkBot() {
-                requestAnimationFrame(checkBot);
-                botAnalyser.getByteFrequencyData(botData);
-                const avg = botData.reduce((a, b) => a + b, 0) / botData.length;
-                const orb = document.getElementById('orb');
-                if (avg > 10) {
-                    orb.className = 'orb speaking';
-                    setLabel('agent speaking');
-                    setStatus(null, '<span class="status-dot green"></span>Speaking');
-                } else if (orb.className === 'orb speaking') {
-                    orb.className = 'orb listening';
-                    setLabel('listening');
-                    setStatus(null, '<span class="status-dot green"></span>Listening');
-                }
-            }
-            checkBot();
+            void attachBotAudio(event.streams[0]);
         };
 
         pc.oniceconnectionstatechange = () => {
@@ -346,8 +378,11 @@ function cleanup() {
     if (localStream) { localStream.getTracks().forEach(t => t.stop()); localStream = null; }
     if (audioCtx) { audioCtx.close(); audioCtx = null; }
     if (animFrame) { cancelAnimationFrame(animFrame); animFrame = null; }
+    stopBotAudioMonitor();
     stopDuration();
-    document.getElementById('bot-audio').srcObject = null;
+    const botAudio = document.getElementById('bot-audio');
+    botAudio.pause();
+    botAudio.srcObject = null;
     document.getElementById('orb').className = 'orb';
     document.getElementById('leave-btn').style.display = 'none';
     document.getElementById('start-btn').disabled = false;
