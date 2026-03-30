@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 _DEFAULT_STT_MODEL = "gpt-4o-transcribe"
-_DEFAULT_TTS_MODEL = "gpt-4o-tts"
+_DEFAULT_TTS_MODEL = "gpt-4o-mini-tts"
 _DEFAULT_STT_PROMPT = (
     "Transcribe Thai debt-collection phone calls into clean Thai text. "
     "Output only what was spoken. Preserve personal names, license plates, province names, "
