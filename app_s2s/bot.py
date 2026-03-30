@@ -8,14 +8,16 @@ from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
 from pipecat.processors.audio.vad_processor import VADProcessor
 from pipecat.services.openai.stt import OpenAISTTService
-from pipecat.services.openai.tts import OpenAITTSService
 from pipecat.transports.smallwebrtc.connection import SmallWebRTCConnection
 from pipecat.transcriptions.language import Language
 
+from common.cached_openai_tts import CachedOpenAITTSService
 from common.config import settings
 from common.flows import get_flow
+from common.flows.collection import CollectionStage
 from common.openai_intent_classifier import OpenAIIntentClassifier
 from common.processors.collection_router import CollectionRouterProcessor
+from common.tts_cache import get_shared_tts_cache
 from common.transport import create_transport
 
 logger = logging.getLogger(__name__)
@@ -50,18 +52,35 @@ async def run_bot(connection: SmallWebRTCConnection) -> None:
         settings=OpenAISTTService.Settings(
             model=settings.openai_stt_model,
             language=Language.TH,
+            prompt=settings.openai_stt_prompt,
         ),
     )
     router = CollectionRouterProcessor(
         flow_definition=flow_definition,
         classifier=classifier,
         state=state,
+        transcript_debounce_secs=settings.transcript_debounce_secs,
     )
-    tts = OpenAITTSService(
+    tts_cache = None
+    if settings.tts_cache_enabled:
+        tts_cache = get_shared_tts_cache(
+            max_entries=settings.tts_cache_max_entries,
+            max_bytes=settings.tts_cache_max_bytes,
+        )
+
+    excluded_texts = {
+        flow_definition.prompt_for(CollectionStage.OPENING),
+        flow_definition.prompt_for(CollectionStage.OPENING, retry=True),
+    }
+    tts = CachedOpenAITTSService(
         api_key=settings.openai_api_key,
         base_url=settings.openai_base_url,
+        cache=tts_cache,
+        cache_enabled=settings.tts_cache_enabled,
+        excluded_texts=excluded_texts,
+        prewarm_texts=flow_definition.prewarm_texts() if settings.tts_cache_prewarm_enabled else (),
         sample_rate=24000,
-        settings=OpenAITTSService.Settings(
+        settings=CachedOpenAITTSService.Settings(
             model=settings.openai_tts_model,
             voice=settings.openai_tts_voice,
             language=Language.TH,
@@ -69,6 +88,7 @@ async def run_bot(connection: SmallWebRTCConnection) -> None:
             speed=settings.openai_tts_speed,
         ),
     )
+
     pipeline = Pipeline(
         [
             transport.input(),

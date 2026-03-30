@@ -2,7 +2,13 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
-from common.flows.collection import CollectionIntent, CollectionStage, VerifyIntent
+from common.flows.collection import (
+    CollectionStage,
+    FAQIntent,
+    OpeningIntent,
+    PaymentInquiryIntent,
+    VerifyIntent,
+)
 from common.openai_intent_classifier import (
     OpenAIIntentClassifier,
     OpenAIVerifyIntentClassifier,
@@ -16,7 +22,7 @@ class OpenAIIntentClassifierTests(unittest.IsolatedAsyncioTestCase):
             responses=SimpleNamespace(
                 parse=AsyncMock(
                     return_value=SimpleNamespace(
-                        output_parsed=SimpleNamespace(route=CollectionIntent.TARGET)
+                        output_parsed=SimpleNamespace(route=OpeningIntent.TARGET)
                     )
                 )
             )
@@ -28,7 +34,7 @@ class OpenAIIntentClassifierTests(unittest.IsolatedAsyncioTestCase):
             {"customer_name": "สมชาย ใจดี"},
         )
 
-        self.assertEqual(intent, CollectionIntent.TARGET)
+        self.assertEqual(intent, OpeningIntent.TARGET)
         kwargs = classifier._client.responses.parse.await_args.kwargs
         self.assertIn("opening greeting", kwargs["instructions"])
         self.assertIn("customer_name: สมชาย ใจดี", kwargs["input"])
@@ -64,13 +70,71 @@ class OpenAIIntentClassifierTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("province: กรุงเทพมหานคร", kwargs["input"])
         self.assertIn("user_reply: ใช่ครับ รถผมเอง", kwargs["input"])
 
+    async def test_classify_stage_payment_inquiry_uses_amount_and_due_date_context(self):
+        classifier = OpenAIIntentClassifier(api_key="test-key", model="test-model")
+        classifier._client = SimpleNamespace(
+            responses=SimpleNamespace(
+                parse=AsyncMock(
+                    return_value=SimpleNamespace(
+                        output_parsed=SimpleNamespace(route=PaymentInquiryIntent.PTP)
+                    )
+                )
+            )
+        )
+
+        intent = await classifier.classify_stage(
+            CollectionStage.PAYMENT_INQUIRY,
+            "วันนี้จะชำระครับ",
+            {
+                "due_amount": "8,500",
+                "due_date": "5 มีนาคม 2568",
+                "deadline": "2 เมษายน 2568",
+            },
+        )
+
+        self.assertEqual(intent, PaymentInquiryIntent.PTP)
+        kwargs = classifier._client.responses.parse.await_args.kwargs
+        self.assertIn("payment inquiry", kwargs["instructions"])
+        self.assertIn("amount_due: 8,500", kwargs["input"])
+        self.assertIn("due_date: 5 มีนาคม 2568", kwargs["input"])
+        self.assertIn("deadline: 2 เมษายน 2568", kwargs["input"])
+
+    async def test_classify_faq_uses_faq_specific_prompt(self):
+        classifier = OpenAIIntentClassifier(api_key="test-key", model="test-model")
+        classifier._client = SimpleNamespace(
+            responses=SimpleNamespace(
+                parse=AsyncMock(
+                    return_value=SimpleNamespace(
+                        output_parsed=SimpleNamespace(route=FAQIntent.PAYMENT_AMOUNT)
+                    )
+                )
+            )
+        )
+
+        intent = await classifier.classify_faq(
+            "ยอดเท่าไหร่ครับ",
+            {
+                "customer_name": "สมชาย ใจดี",
+                "due_amount": "8,500",
+                "due_date": "5 มีนาคม 2568",
+            },
+        )
+
+        self.assertEqual(intent, FAQIntent.PAYMENT_AMOUNT)
+        kwargs = classifier._client.responses.parse.await_args.kwargs
+        self.assertIn("clarification question", kwargs["instructions"])
+        self.assertIn("customer_name: สมชาย ใจดี", kwargs["input"])
+        self.assertIn("amount_due: 8,500", kwargs["input"])
+        self.assertIn("due_date: 5 มีนาคม 2568", kwargs["input"])
+        self.assertIn("user_reply: ยอดเท่าไหร่ครับ", kwargs["input"])
+
     async def test_legacy_opening_classify_alias_routes_to_opening_stage(self):
         classifier = OpenAIIntentClassifier(api_key="test-key", model="test-model")
-        classifier.classify_stage = AsyncMock(return_value=CollectionIntent.FAQ)
+        classifier.classify_stage = AsyncMock(return_value=OpeningIntent.FAQ)
 
         intent = await classifier.classify("โทรมาเรื่องอะไรคะ", {"customer_name": "สมชาย"})
 
-        self.assertEqual(intent, CollectionIntent.FAQ)
+        self.assertEqual(intent, OpeningIntent.FAQ)
         classifier.classify_stage.assert_awaited_once_with(
             CollectionStage.OPENING,
             "โทรมาเรื่องอะไรคะ",

@@ -47,11 +47,17 @@ cp .env.example .env
 OPENAI_API_KEY="your-openai-api-key"
 OPENAI_BASE_URL=""
 OPENAI_STT_MODEL="gpt-4o-transcribe"
+OPENAI_STT_PROMPT="Transcribe Thai phone-call speech accurately. Preserve spoken particles such as ครับ ค่ะ นะคะ and proper names exactly as spoken. Do not summarize or add words that were not spoken."
 OPENAI_INTENT_MODEL="gpt-4o-mini"
 OPENAI_TTS_MODEL="gpt-4o-mini-tts"
 OPENAI_TTS_VOICE="sage"
 OPENAI_TTS_SPEED="0.94"
 OPENAI_TTS_INSTRUCTIONS="Speak in natural Thai with a warm, human customer-service tone. Use smooth pacing, gentle prosody, and short natural pauses. Avoid robotic cadence, flat delivery, and over-enunciation."
+TTS_CACHE_ENABLED="true"
+TTS_CACHE_MAX_ENTRIES="128"
+TTS_CACHE_MAX_BYTES="67108864"
+TTS_CACHE_PREWARM_ENABLED="true"
+TRANSCRIPT_DEBOUNCE_SECS="0.8"
 FLOW="collection"
 HOST="0.0.0.0"
 S2S_PORT="7861"
@@ -83,6 +89,10 @@ https://localhost:7861/
 - browser อาจเตือนเรื่อง self-signed certificate ในครั้งแรก
 - opening script จะถูกพูดทันทีเมื่อ session เริ่ม
 - หลังจากลูกค้าตอบ ระบบจะ route ตาม stage ปัจจุบัน (`opening` หรือ `verify`)
+- ระบบจะ prewarm เสียงของ non-opening prompts แบบ background เพื่อช่วยลด TTS latency
+- opening และ opening retry ถูกตั้งใจให้ bypass cache ในเวอร์ชันนี้
+- ระบบจะ debounce transcript ช่วงสั้น ๆ ก่อน classify เพื่อรวมคำตอบที่พูดเป็นหลายท่อน
+- ถ้า STT เพี้ยน ให้ลองปรับ `OPENAI_STT_PROMPT` ให้เหมาะกับบริบทภาษาไทยและคำเฉพาะในสายงาน
 - ถ้าเสียงยังแข็งเกินไป ให้ลองปรับ `OPENAI_TTS_VOICE`, `OPENAI_TTS_SPEED`, และ `OPENAI_TTS_INSTRUCTIONS`
 
 เช็ก health endpoint:
