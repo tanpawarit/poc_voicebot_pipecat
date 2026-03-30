@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 _DEFAULT_STT_MODEL = "gpt-4o-transcribe"
+_DEFAULT_TTS_MODEL = "gpt-4o-tts"
 _DEFAULT_STT_PROMPT = (
     "Transcribe Thai debt-collection phone calls into clean Thai text. "
     "Output only what was spoken. Preserve personal names, license plates, province names, "
@@ -40,7 +41,7 @@ class Settings:
         default_factory=lambda: os.environ.get("OPENAI_INTENT_MODEL", "gpt-4o-mini")
     )
     openai_tts_model: str = field(
-        default_factory=lambda: os.environ.get("OPENAI_TTS_MODEL", "gpt-4o-mini-tts")
+        default_factory=lambda: os.environ.get("OPENAI_TTS_MODEL", _DEFAULT_TTS_MODEL)
     )
     openai_tts_voice: str = field(
         default_factory=lambda: os.environ.get("OPENAI_TTS_VOICE", "coral")

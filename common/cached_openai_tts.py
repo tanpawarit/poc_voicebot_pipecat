@@ -10,6 +10,7 @@ from uuid import uuid4
 from pipecat.frames.frames import CancelFrame, EndFrame, ErrorFrame, StartFrame, TTSAudioRawFrame
 from pipecat.services.openai.tts import OpenAITTSService
 
+from common.thai_phonetics import preprocess_for_tts
 from common.tts_cache import TTSMemoryCache, build_tts_cache_key
 
 logger = logging.getLogger(__name__)
@@ -48,6 +49,7 @@ class CachedOpenAITTSService(OpenAITTSService):
         await super().cancel(frame)
 
     async def run_tts(self, text: str, context_id: str):
+        text = preprocess_for_tts(text)
         if not self._should_cache_text(text):
             async for frame in super().run_tts(text, context_id):
                 yield frame
